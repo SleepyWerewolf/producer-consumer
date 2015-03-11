@@ -6,10 +6,12 @@
 #include <string.h> //for string compare
 
 #define MAX_BELT_SIZE 10		// Total items on conveyor belt at once
-#define TOTAL_CANDIES 20		// Total items produced by a candy generator
+#define TOTAL_CANDIES 100		// Total items produced by a candy generator
 
 #define FROG_BITE 1
 #define ESCARGOT 0
+
+#define NUM_THREADS 2
 
 #define MSPERSEC 1000			// One thousand milliseconds per second
 #define NSPERMS 1000000			// One million nanoseconds per millisecond
@@ -30,9 +32,7 @@ typedef struct {
 	sem_t fillCount;			// Items produced
 	sem_t emptyCount;			// remaining space
 
-	pthread_cond_t condp;
-	pthread_cond_t condc;
-	pthread_cond_t barrier; 	// Barrier
+	pthread_cond_t barrierCond; 	// Barrier
 
 	pthread_mutex_t mutex;		// Protects the counters
 	pthread_mutex_t frogMutex;	// Blocks other frog bites while the current haven't been eaten yet
@@ -76,7 +76,7 @@ void *produceCandy (void *c) {
 			if (candyMade == FROG_BITE) {
 				pthread_mutex_lock(&producerCritSection->frogMutex);
 				producerCritSection->storage[producerCritSection->beltCount++] = candyMade;
-				if (++producerCritSection->frogCount == 3)
+				if (++producerCritSection->frogCount == 3) 
 					sem_post(&producerCritSection->fillCount);
 				else
 					pthread_mutex_unlock(&producerCritSection->frogMutex);
@@ -105,6 +105,13 @@ void *produceCandy (void *c) {
 		// Update local thread counter
 		Producer->produced++;
 	}
+
+	// Barrier
+	pthread_mutex_lock(&producerCritSection->groupMutex);
+		if (++producerCritSection->barrierCount == NUM_THREADS)
+			pthread_cond_signal(&producerCritSection->barrierCond);
+	pthread_mutex_unlock(&producerCritSection->groupMutex);
+
 	pthread_exit(NULL);
 }
 
@@ -153,6 +160,13 @@ void *consumeCandy (void *w) {
 		else if (candyConsumed == ESCARGOT)
 			Consumer->escargotConsumed++;
 	}
+
+	// Barrier
+	pthread_mutex_lock(&consumerCritSection->groupMutex);
+		if (++consumerCritSection->barrierCount == NUM_THREADS)
+			pthread_cond_signal(&consumerCritSection->barrierCond);
+	pthread_mutex_unlock(&consumerCritSection->groupMutex);
+
 	pthread_exit(NULL);
 }
 
@@ -167,22 +181,22 @@ int main (int argc, char *argv[]) {
 
 	producer *frogBite = malloc(sizeof(producer));
 	frogBite->crit_section = crit_section;
-	frogBite->produced = frogBite->duration = 20;
+	frogBite->produced = frogBite->duration = 0;
 	frogBite->name = "frog bite";
 
 	producer *escargot = malloc(sizeof(producer));
 	escargot->crit_section = crit_section;
-	escargot->produced = escargot->duration = 5;
+	escargot->produced = escargot->duration = 0;
 	escargot->name = "escargot";
 
 	consumer *lucy = malloc(sizeof(consumer));
 	lucy->crit_section = crit_section;
-	lucy->frogBiteConsumed = lucy->escargotConsumed = lucy->duration = 15;
+	lucy->frogBiteConsumed = lucy->escargotConsumed = lucy->duration = 0;
 	lucy->name = "Lucy";
 
 	consumer *ethel = malloc(sizeof(consumer));
 	ethel->crit_section = crit_section;
-	ethel->frogBiteConsumed = ethel->escargotConsumed = ethel->duration = 10;
+	ethel->frogBiteConsumed = ethel->escargotConsumed = ethel->duration = 0;
 	ethel->name = "Ethel";
 
 	/*
@@ -213,6 +227,7 @@ int main (int argc, char *argv[]) {
 	}
 	*/
 
+	pthread_t producerThread, consumerThread;
 	pthread_t frogThread, escargotThread, lucyThread, ethelThread;
 
 	// Initialize semaphores and mutexes
@@ -225,36 +240,30 @@ int main (int argc, char *argv[]) {
 
 
 	pthread_mutex_init(&crit_section->groupMutex, NULL);
-	pthread_cond_init(&crit_section->condp, 0);
-	pthread_cond_init(&crit_section->condc, 0);
-	pthread_cond_init(&crit_section->barrier, 0);
+	pthread_cond_init(&crit_section->barrierCond, 0);
 
 	// Producer Threads
-	//pthread_create(&frogThread, NULL, produceCandy, (void*) frogBite);
+	pthread_create(&frogThread, NULL, produceCandy, (void*) frogBite);
 	pthread_create(&escargotThread, NULL, produceCandy, (void*) escargot);
 
 	// Consumer Threads
 	pthread_create(&ethelThread, NULL, consumeCandy, (void*) ethel);
 	pthread_create(&lucyThread, NULL, consumeCandy, (void*) lucy);
 
-	/*
-	while (crit_section->barrierCount < 4) pthread_cond_wait(&crit_section->barrier, &crit_section->groupMutex);
+
+	while (crit_section->barrierCount < NUM_THREADS) pthread_cond_wait(&crit_section->barrierCond, &crit_section->groupMutex);
 		printf("\nPRODUCTION REPORT\n");
 		printf("------------------------------------------\n");
 		printf("Crunchy Frog Bite producer generated %d candies\n", frogBite->produced);
 		printf("Escargot Sucker producer generated %d candies\n", escargot->produced);
 		printf("Lucy consumed %d Crunchy Frog Bites + %d Escargot Suckers = %d\n", lucy->frogBiteConsumed, lucy->escargotConsumed, lucy->frogBiteConsumed + lucy->escargotConsumed);
 		printf("Ethel consumed %d Crunchy Frog Bites + %d Escargot Suckers = %d\n", ethel->frogBiteConsumed, ethel->escargotConsumed, ethel->frogBiteConsumed + ethel->escargotConsumed);
-	*/
+
 	pthread_join(lucyThread, 0);
 	pthread_join(ethelThread, 0);
 	pthread_join(escargotThread, 0);
-	//pthread_join(frogThread, 0);
-
-	pthread_exit(NULL);
-
-
-
+	pthread_join(frogThread, 0);
+	
 	free(lucy);
 	free(ethel);
 	free(escargot);
