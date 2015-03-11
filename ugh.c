@@ -5,13 +5,14 @@
 #include <unistd.h> // for sleep
 #include <string.h> //for string compare
 
+#define MAX_FROGS 3
 #define MAX_BELT_SIZE 10		// Total items on conveyor belt at once
 #define TOTAL_CANDIES 100		// Total items produced by a candy generator
 
 #define FROG_BITE 1
 #define ESCARGOT 0
 
-#define NUM_THREADS 2
+#define NUM_THREADS 4
 
 #define MSPERSEC 1000			// One thousand milliseconds per second
 #define NSPERMS 1000000			// One million nanoseconds per millisecond
@@ -29,11 +30,16 @@ typedef struct {
 	int totalProduced;
 	int totalConsumed;
 
+	// Semaphores
 	sem_t fillCount;			// Items produced
 	sem_t emptyCount;			// remaining space
+	sem_t maxFrogCount;			// Frogs bites on conveyor belt
+	sem_t emptyFrogCount;		// No frogs left on conveyor belt
 
+	// Conditional Variable
 	pthread_cond_t barrierCond; 	// Barrier
 
+	// Mutexes
 	pthread_mutex_t mutex;		// Protects the counters
 	pthread_mutex_t frogMutex;	// Blocks other frog bites while the current haven't been eaten yet
 	pthread_mutex_t groupMutex; // Barrier mutex
@@ -74,12 +80,10 @@ void *produceCandy (void *c) {
 
 			// Handle Frog Bites
 			if (candyMade == FROG_BITE) {
-				pthread_mutex_lock(&producerCritSection->frogMutex);
+				sem_wait(&producerCritSection->emptyFrogCount);
 				producerCritSection->storage[producerCritSection->beltCount++] = candyMade;
-				if (++producerCritSection->frogCount == 3) 
-					sem_post(&producerCritSection->fillCount);
-				else
-					pthread_mutex_unlock(&producerCritSection->frogMutex);
+				producerCritSection->frogCount++;
+				sem_post(&producerCritSection->maxFrogCount);
 			} 
 
 			// Handle Escargot Sucker
@@ -92,7 +96,9 @@ void *produceCandy (void *c) {
 			producerCritSection->totalProduced++;
 
 			// Output
-			printf("Belt: %d frogs + %d escargots = %d. produced: %d\t", producerCritSection->frogCount, producerCritSection->escargotCount, producerCritSection->beltCount, producerCritSection->totalProduced);
+			printf("Belt: %d frogs + %d escargots = %d. produced: %d\t", 
+				producerCritSection->frogCount, producerCritSection->escargotCount, 
+				producerCritSection->beltCount, producerCritSection->totalProduced);
 			if (candyMade == FROG_BITE)
 				printf("Added crunchy frog bite.\n");
 			else if (candyMade == ESCARGOT)
@@ -105,6 +111,8 @@ void *produceCandy (void *c) {
 		// Update local thread counter
 		Producer->produced++;
 	}
+
+	printf("Producer has finished\n");
 
 	// Barrier
 	pthread_mutex_lock(&producerCritSection->groupMutex);
@@ -133,18 +141,23 @@ void *consumeCandy (void *w) {
 			consumerCritSection->beltCount--;
 
 			// Handle Frog Bites
-			if (candyConsumed == 1) 
+			if (candyConsumed == FROG_BITE) {
+				sem_wait(&consumerCritSection->maxFrogCount);
 				consumerCritSection->frogCount--;
+				sem_post(&consumerCritSection->emptyFrogCount);
+			}
 
 			// Handle Escargot Suckers
-			else if (candyConsumed == 0) 
+			else if (candyConsumed == ESCARGOT) 
 				consumerCritSection->escargotCount--;
 
 			// Update counters
 			consumerCritSection->totalConsumed++;
 
 			// Output
-			printf("Belt: %d frogs + %d escargots = %d. produced: %d\t", consumerCritSection->frogCount, consumerCritSection->escargotCount, consumerCritSection->beltCount, consumerCritSection->totalProduced);
+			printf("Belt: %d frogs + %d escargots = %d. produced: %d\t", 
+				consumerCritSection->frogCount, consumerCritSection->escargotCount, 
+				consumerCritSection->beltCount, consumerCritSection->totalProduced);
 			if (candyConsumed == FROG_BITE)
 				printf("%s consumed crunchy frog bite.\n", Consumer->name);
 			else if (candyConsumed == ESCARGOT)
@@ -160,6 +173,8 @@ void *consumeCandy (void *w) {
 		else if (candyConsumed == ESCARGOT)
 			Consumer->escargotConsumed++;
 	}
+
+	printf("Consumer has finished\n");
 
 	// Barrier
 	pthread_mutex_lock(&consumerCritSection->groupMutex);
@@ -230,16 +245,18 @@ int main (int argc, char *argv[]) {
 	pthread_t producerThread, consumerThread;
 	pthread_t frogThread, escargotThread, lucyThread, ethelThread;
 
-	// Initialize semaphores and mutexes
+	// Initialize semaphores
 	sem_init(&crit_section->fillCount, 0, 0);
 	sem_init(&crit_section->emptyCount, 0, MAX_BELT_SIZE);
+	sem_init(&crit_section->maxFrogCount, 0, 0);
+	sem_init(&crit_section->emptyFrogCount, 0, MAX_FROGS);
+
+	// Initialize mutexes
 	pthread_mutex_init(&crit_section->mutex, NULL);
 	pthread_mutex_init(&crit_section->frogMutex, NULL);
-
-
-
-
 	pthread_mutex_init(&crit_section->groupMutex, NULL);
+
+	// Initialize conditional variable
 	pthread_cond_init(&crit_section->barrierCond, 0);
 
 	// Producer Threads
@@ -250,19 +267,15 @@ int main (int argc, char *argv[]) {
 	pthread_create(&ethelThread, NULL, consumeCandy, (void*) ethel);
 	pthread_create(&lucyThread, NULL, consumeCandy, (void*) lucy);
 
-
-	while (crit_section->barrierCount < NUM_THREADS) pthread_cond_wait(&crit_section->barrierCond, &crit_section->groupMutex);
-		printf("\nPRODUCTION REPORT\n");
-		printf("------------------------------------------\n");
-		printf("Crunchy Frog Bite producer generated %d candies\n", frogBite->produced);
-		printf("Escargot Sucker producer generated %d candies\n", escargot->produced);
-		printf("Lucy consumed %d Crunchy Frog Bites + %d Escargot Suckers = %d\n", lucy->frogBiteConsumed, lucy->escargotConsumed, lucy->frogBiteConsumed + lucy->escargotConsumed);
-		printf("Ethel consumed %d Crunchy Frog Bites + %d Escargot Suckers = %d\n", ethel->frogBiteConsumed, ethel->escargotConsumed, ethel->frogBiteConsumed + ethel->escargotConsumed);
-
-	pthread_join(lucyThread, 0);
-	pthread_join(ethelThread, 0);
-	pthread_join(escargotThread, 0);
-	pthread_join(frogThread, 0);
+	// Production Output
+	while (crit_section->barrierCount < NUM_THREADS) 
+		pthread_cond_wait(&crit_section->barrierCond, &crit_section->groupMutex);
+	printf("\nPRODUCTION REPORT\n");
+	printf("------------------------------------------\n");
+	printf("Crunchy Frog Bite producer generated %d candies\n", frogBite->produced);
+	printf("Escargot Sucker producer generated %d candies\n", escargot->produced);
+	printf("Lucy consumed %d Crunchy Frog Bites + %d Escargot Suckers = %d\n", lucy->frogBiteConsumed, lucy->escargotConsumed, lucy->frogBiteConsumed + lucy->escargotConsumed);
+	printf("Ethel consumed %d Crunchy Frog Bites + %d Escargot Suckers = %d\n", ethel->frogBiteConsumed, ethel->escargotConsumed, ethel->frogBiteConsumed + ethel->escargotConsumed);
 	
 	free(lucy);
 	free(ethel);
