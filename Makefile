@@ -1,2 +1,2 @@
-ugh: ugh.c
-	cc -o ugh ugh.c -lpthread -lrt
+mizzoCandy: mizzoCandy.c
+	cc -o mizzoCandy mizzoCandy.c producer.c consumer.c -lpthread -lrt
