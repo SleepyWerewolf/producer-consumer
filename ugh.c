@@ -68,7 +68,7 @@ void *produceCandy (void *c) {
 	int semTest;
 
 	//Critical Point
-	while (producerCritSection->totalProduced < TOTAL_CANDIES) {
+	while (producerCritSection->totalProduced < TOTAL_CANDIES-1) {
 
 		// Produce Item
 		if (strcmp(candyName, "frog bite") == 0)
@@ -124,7 +124,6 @@ void *produceCandy (void *c) {
 }
 
 void *consumeCandy (void *w) {
-	printf("\nConsumer is started\n");
 	consumer *Consumer = (consumer *)w;
 	semBuffer *consumerCritSection = Consumer->crit_section;
 	int candyConsumed = 0, i;
@@ -176,7 +175,6 @@ void *consumeCandy (void *w) {
 			Consumer->frogBiteConsumed++;
 		else if (candyConsumed == ESCARGOT)
 			Consumer->escargotConsumed++;
-
 	}
 
 	// Barrier
