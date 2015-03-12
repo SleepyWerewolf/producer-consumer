@@ -11,8 +11,9 @@
 
 #define FROG_BITE 1
 #define ESCARGOT 0
+#define POISON 2
 
-#define NUM_THREADS 3
+#define NUM_THREADS 4
 
 #define MSPERSEC 1000			// One thousand milliseconds per second
 #define NSPERMS 1000000			// One million nanoseconds per millisecond
@@ -34,6 +35,7 @@ typedef struct {
 	sem_t fillCount;			// Items produced
 	sem_t emptyCount;			// remaining space
 	sem_t frogSem;				// Frogs on conveyor belt
+	sem_t barrierSem;
 
 	// Conditional Variable
 	pthread_cond_t barrierCond; 	// Barrier
@@ -62,13 +64,15 @@ void *produceCandy (void *c) {
 	producer *Producer = (producer *)c;
 	semBuffer *producerCritSection = Producer->crit_section;
 	int candyMade = 0;
+	int loop = 1;
 	char *candyName = Producer->name;
+	struct timespec SleepTime;
+	int testLoop;
 
-	int maxSemTest, emptySemTest;
-	int semTest;
+	SleepTime.tv_sec = Producer->duration / MSPERSEC;
+	SleepTime.tv_nsec = (Producer->duration % MSPERSEC) * NSPERMS;
 
-	//Critical Point
-	while (producerCritSection->totalProduced < TOTAL_CANDIES-1) {
+	while (loop) {
 
 		// Produce Item
 		if (strcmp(candyName, "frog bite") == 0)
@@ -77,41 +81,46 @@ void *produceCandy (void *c) {
 			candyMade = ESCARGOT;
 
 		sem_wait(&producerCritSection->emptyCount); 		// Decrement empty count
-		pthread_mutex_lock(&producerCritSection->mutex); 	// Enter critical region
+		pthread_mutex_lock(&producerCritSection->mutex); 	// Enter critical section
+			if (producerCritSection->totalProduced < TOTAL_CANDIES) {
 
-			// Handle Frog Bites
-			if (candyMade == FROG_BITE) {
-				pthread_mutex_unlock(&producerCritSection->mutex);
-				sem_wait(&producerCritSection->frogSem);
-				pthread_mutex_lock(&producerCritSection->mutex);
-				producerCritSection->storage[producerCritSection->beltCount++] = candyMade;
-				producerCritSection->frogCount++;
-			}
+				// Handle Frog Bites
+				if (candyMade == FROG_BITE) {
+					pthread_mutex_unlock(&producerCritSection->mutex);
+					sem_wait(&producerCritSection->frogSem);
+					pthread_mutex_lock(&producerCritSection->mutex);
+					producerCritSection->storage[producerCritSection->beltCount++] = candyMade;
+					producerCritSection->frogCount++;
+				}
 
-			// Handle Escargot Sucker
-			else if (candyMade == ESCARGOT) {
-				producerCritSection->storage[producerCritSection->beltCount++] = candyMade;
-				producerCritSection->escargotCount++;
-			}
+				// Handle Escargot Sucker
+				else if (candyMade == ESCARGOT) {
+					producerCritSection->storage[producerCritSection->beltCount++] = candyMade;
+					producerCritSection->escargotCount++;
+				}
 
-			// Update Counters
-			producerCritSection->totalProduced++;
+				// Update Counters
+				producerCritSection->totalProduced++;
 
-			// Output
-			printf("Belt: %d frogs + %d escargots = %d. produced: %d\t", 
-				producerCritSection->frogCount, producerCritSection->escargotCount, 
-				producerCritSection->beltCount, producerCritSection->totalProduced);
-			if (candyMade == FROG_BITE)
-				printf("Added crunchy frog bite.\n");
-			else if (candyMade == ESCARGOT)
-				printf("Added escargot sucker.\n");
-			fflush(stdout);
+				// Update local thread counter
+				Producer->produced++;
+
+				// Output
+				printf("Belt: %d frogs + %d escargots = %d. produced: %d\t", 
+					producerCritSection->frogCount, producerCritSection->escargotCount, 
+					producerCritSection->beltCount, producerCritSection->totalProduced);
+				if (candyMade == FROG_BITE)
+					printf("Added crunchy frog bite.\n");
+				else if (candyMade == ESCARGOT)
+					printf("Added escargot sucker.\n");
+				fflush(stdout);
+			} else loop = 0;
 
 		pthread_mutex_unlock(&producerCritSection->mutex);	// Exit critical region
 		sem_post(&producerCritSection->fillCount);			// Increment count of full slots
 
-		// Update local thread counter
-		Producer->produced++;
+		// Sleep
+		nanosleep(&SleepTime, NULL);
 	}
 
 	// Barrier
@@ -127,54 +136,64 @@ void *consumeCandy (void *w) {
 	consumer *Consumer = (consumer *)w;
 	semBuffer *consumerCritSection = Consumer->crit_section;
 	int candyConsumed = 0, i;
+	int loop = 1;
+	struct timespec SleepTime;
 
-	int maxSemTest, emptySemTest;	
+	SleepTime.tv_sec = Consumer->duration / MSPERSEC;
+	SleepTime.tv_nsec = (Consumer->duration % MSPERSEC) * NSPERMS;
 	
-	while (consumerCritSection->totalConsumed < TOTAL_CANDIES) {
-
+	while (loop) {
 		sem_wait(&consumerCritSection->fillCount);			// Decrement full count
-		pthread_mutex_lock(&consumerCritSection->mutex);	// Enter critical region
+		pthread_mutex_lock(&consumerCritSection->mutex);	// Enter critical section
+			if (consumerCritSection->totalConsumed < TOTAL_CANDIES) {
 
-			// Candy is first item off of conveyor belt
-			candyConsumed = consumerCritSection->storage[0];
+				// Candy is first item off of conveyor belt
+				candyConsumed = consumerCritSection->storage[0];
 
-			// Rearrange storage
-			for (i=0; i<consumerCritSection->beltCount; i++)
-				consumerCritSection->storage[i] = consumerCritSection->storage[i+1];
-			consumerCritSection->beltCount--;
+				// Rearrange storage
+				for (i=0; i<consumerCritSection->beltCount; i++)
+					consumerCritSection->storage[i] = consumerCritSection->storage[i+1];
+				consumerCritSection->beltCount--;
 
 
-			// Handle Frog Bites
-			if (candyConsumed == FROG_BITE) {
-				sem_post(&consumerCritSection->frogSem);
-				consumerCritSection->frogCount--;
+				// Handle Frog Bites
+				if (candyConsumed == FROG_BITE) {
+					sem_post(&consumerCritSection->frogSem);
+					consumerCritSection->frogCount--;
+				}
+
+				// Handle Escargot Suckers
+				else if (candyConsumed == ESCARGOT) 
+					consumerCritSection->escargotCount--;
+
+				// Update counters
+				consumerCritSection->totalConsumed++;
+
+				// Update local thread counters
+				if (candyConsumed == FROG_BITE)
+					Consumer->frogBiteConsumed++;
+				else if (candyConsumed == ESCARGOT)
+					Consumer->escargotConsumed++;
+
+				// Output
+				printf("Belt: %d frogs + %d escargots = %d. produced: %d\t", 
+					consumerCritSection->frogCount, consumerCritSection->escargotCount, 
+					consumerCritSection->beltCount, consumerCritSection->totalProduced);
+				if (candyConsumed == FROG_BITE)
+					printf("%s consumed crunchy frog bite. (%d)\n", Consumer->name, Consumer->frogBiteConsumed + Consumer->escargotConsumed);
+				else if (candyConsumed == ESCARGOT)
+					printf("%s consumed escargot sucker. (%d)\n", Consumer->name, Consumer->escargotConsumed + Consumer->frogBiteConsumed);
+				fflush(stdout);
+			} else {
+				loop = 0;
+				sem_post(&consumerCritSection->barrierSem);
 			}
-
-		// Handle Escargot Suckers
-			else if (candyConsumed == ESCARGOT) 
-				consumerCritSection->escargotCount--;
-
-			// Update counters
-			consumerCritSection->totalConsumed++;
-
-			// Output
-			printf("Belt: %d frogs + %d escargots = %d. produced: %d\t", 
-				consumerCritSection->frogCount, consumerCritSection->escargotCount, 
-				consumerCritSection->beltCount, consumerCritSection->totalProduced);
-			if (candyConsumed == FROG_BITE)
-				printf("%s consumed crunchy frog bite.\n", Consumer->name);
-			else if (candyConsumed == ESCARGOT)
-				printf("%s consumed escargot sucker.\n", Consumer->name);
-			fflush(stdout);
 
 		pthread_mutex_unlock(&consumerCritSection->mutex);	// Exit critical region
 		sem_post(&consumerCritSection->emptyCount);			// Increment count of empty slots
 
-		// Update local thread counters
-		if (candyConsumed == FROG_BITE)
-			Consumer->frogBiteConsumed++;
-		else if (candyConsumed == ESCARGOT)
-			Consumer->escargotConsumed++;
+		// Sleep
+		nanosleep(&SleepTime, NULL);
 	}
 
 	// Barrier
@@ -215,6 +234,14 @@ int main (int argc, char *argv[]) {
 	ethel->frogBiteConsumed = ethel->escargotConsumed = ethel->duration = 0;
 	ethel->name = "Ethel";
 
+
+
+	frogBite->duration = 0;
+	escargot->duration = 0;
+	lucy->duration = 0;
+	ethel->duration = 0;
+
+
 	/*
 	while ((flagCheck = getopt(argc, argv, "ELfe")) != -1) {
 		switch(flagCheck) {
@@ -250,6 +277,7 @@ int main (int argc, char *argv[]) {
 	sem_init(&crit_section->fillCount, 0, 0);
 	sem_init(&crit_section->emptyCount, 0, MAX_BELT_SIZE);
 	sem_init(&crit_section->frogSem, 0, MAX_FROGS);
+	sem_init(&crit_section->barrierSem, 0, 0);
 
 	// Initialize mutexes
 	pthread_mutex_init(&crit_section->mutex, NULL);
@@ -266,15 +294,17 @@ int main (int argc, char *argv[]) {
 	pthread_create(&lucyThread, NULL, consumeCandy, (void*) lucy);
 
 	// Production Output
-	while (crit_section->barrierCount < NUM_THREADS) 
-		pthread_cond_wait(&crit_section->barrierCond, &crit_section->groupMutex);
+
+	//while (crit_section->barrierCount < NUM_THREADS) 
+	//	pthread_cond_wait(&crit_section->barrierCond, &crit_section->groupMutex);
+	sem_wait(&crit_section->barrierSem);
 	printf("\nPRODUCTION REPORT\n");
 	printf("------------------------------------------\n");
 	printf("Crunchy Frog Bite producer generated %d candies\n", frogBite->produced);
 	printf("Escargot Sucker producer generated %d candies\n", escargot->produced);
 	printf("Lucy consumed %d Crunchy Frog Bites + %d Escargot Suckers = %d\n", lucy->frogBiteConsumed, lucy->escargotConsumed, lucy->frogBiteConsumed + lucy->escargotConsumed);
 	printf("Ethel consumed %d Crunchy Frog Bites + %d Escargot Suckers = %d\n", ethel->frogBiteConsumed, ethel->escargotConsumed, ethel->frogBiteConsumed + ethel->escargotConsumed);
-	
+
 	free(lucy);
 	free(ethel);
 	free(escargot);
