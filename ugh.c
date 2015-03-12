@@ -11,9 +11,6 @@
 
 #define FROG_BITE 1
 #define ESCARGOT 0
-#define POISON 2
-
-#define NUM_THREADS 4
 
 #define MSPERSEC 1000			// One thousand milliseconds per second
 #define NSPERMS 1000000			// One million nanoseconds per millisecond
@@ -37,12 +34,8 @@ typedef struct {
 	sem_t frogSem;				// Frogs on conveyor belt
 	sem_t barrierSem;
 
-	// Conditional Variable
-	pthread_cond_t barrierCond; 	// Barrier
-
 	// Mutexes
 	pthread_mutex_t mutex;		// Protects the counters
-	pthread_mutex_t groupMutex; // Barrier mutex
 } semBuffer;
 
 typedef struct {
@@ -123,12 +116,6 @@ void *produceCandy (void *c) {
 		nanosleep(&SleepTime, NULL);
 	}
 
-	// Barrier
-	pthread_mutex_lock(&producerCritSection->groupMutex);
-		if (++producerCritSection->barrierCount == NUM_THREADS)
-			pthread_cond_signal(&producerCritSection->barrierCond);
-	pthread_mutex_unlock(&producerCritSection->groupMutex);
-
 	pthread_exit(NULL);
 }
 
@@ -180,13 +167,13 @@ void *consumeCandy (void *w) {
 					consumerCritSection->frogCount, consumerCritSection->escargotCount, 
 					consumerCritSection->beltCount, consumerCritSection->totalProduced);
 				if (candyConsumed == FROG_BITE)
-					printf("%s consumed crunchy frog bite. (%d)\n", Consumer->name, Consumer->frogBiteConsumed + Consumer->escargotConsumed);
+					printf("%s consumed crunchy frog bite.\n", Consumer->name);
 				else if (candyConsumed == ESCARGOT)
-					printf("%s consumed escargot sucker. (%d)\n", Consumer->name, Consumer->escargotConsumed + Consumer->frogBiteConsumed);
+					printf("%s consumed escargot sucker.\n", Consumer->name);
 				fflush(stdout);
 			} else {
 				loop = 0;
-				sem_post(&consumerCritSection->barrierSem);
+				sem_post(&consumerCritSection->barrierSem); // Barrier semaphore in main thread
 			}
 
 		pthread_mutex_unlock(&consumerCritSection->mutex);	// Exit critical region
@@ -196,17 +183,12 @@ void *consumeCandy (void *w) {
 		nanosleep(&SleepTime, NULL);
 	}
 
-	// Barrier
-	pthread_mutex_lock(&consumerCritSection->groupMutex);
-		if (++consumerCritSection->barrierCount == NUM_THREADS)
-			pthread_cond_signal(&consumerCritSection->barrierCond);
-	pthread_mutex_unlock(&consumerCritSection->groupMutex);
-
 	pthread_exit(NULL);
 }
 
 int main (int argc, char *argv[]) {
 	int flagCheck;
+	char *dick;
 
 	semBuffer *crit_section = malloc(sizeof(semBuffer));
 
@@ -234,41 +216,27 @@ int main (int argc, char *argv[]) {
 	ethel->frogBiteConsumed = ethel->escargotConsumed = ethel->duration = 0;
 	ethel->name = "Ethel";
 
-
-
-	frogBite->duration = 0;
-	escargot->duration = 0;
-	lucy->duration = 0;
-	ethel->duration = 0;
-
-
-	/*
-	while ((flagCheck = getopt(argc, argv, "ELfe")) != -1) {
+	// Checking optional command line arguments
+	while ((flagCheck = getopt(argc, argv, "E:L:f:e:")) != -1) {
 		switch(flagCheck) {
 			case 'E':
-				printf("You put Ethel's duration to %d\n", optopt);
+				ethel->duration = atoi(optarg);
 				break;
 			case 'L':
-				printf("You put Lucy's duration to %d\n", optopt);
+				lucy->duration = atoi(optarg);
 				break;
 			case 'f':
-				printf("You put Frog Bites duration to %d\n", optopt);
+				frogBite->duration = atoi(optarg);
 				break;
 			case 'e':
-				printf("Yout put Escargot Suckers duration to %d\n", optopt);
+				escargot->duration = atoi(optarg);
 				break;
 			case '?':
-				if (optopt == 'E' || optopt == 'L' || optopt == 'f' || optopt == 'e')
-					printf("Option -%c requires an argument.\n", optopt);
-				else if (isprint(optopt))
-					printf("Unknown option -%c.\n", optopt);
-				else printf("Unknown option character\n");
 				exit(0);
 			default:
-				break;
+				exit(0);
 		}
 	}
-	*/
 
 	pthread_t producerThread, consumerThread;
 	pthread_t frogThread, escargotThread, lucyThread, ethelThread;
@@ -282,9 +250,6 @@ int main (int argc, char *argv[]) {
 	// Initialize mutexes
 	pthread_mutex_init(&crit_section->mutex, NULL);
 
-	// Initialize conditional variable
-	pthread_cond_init(&crit_section->barrierCond, 0);
-
 	// Producer Threads
 	pthread_create(&frogThread, NULL, produceCandy, (void*) frogBite);
 	pthread_create(&escargotThread, NULL, produceCandy, (void*) escargot);
@@ -294,9 +259,6 @@ int main (int argc, char *argv[]) {
 	pthread_create(&lucyThread, NULL, consumeCandy, (void*) lucy);
 
 	// Production Output
-
-	//while (crit_section->barrierCount < NUM_THREADS) 
-	//	pthread_cond_wait(&crit_section->barrierCond, &crit_section->groupMutex);
 	sem_wait(&crit_section->barrierSem);
 	printf("\nPRODUCTION REPORT\n");
 	printf("------------------------------------------\n");
