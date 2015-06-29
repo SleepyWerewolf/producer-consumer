@@ -1,5 +1,11 @@
 #include "mizzoCandy.h"
 
+// Producer file. Production runs inside a while loop
+// that is broken once the total items produced
+// goes past the given limit (TOTAL_CANDY). Inside the loop,
+// it checks for which type of candy is being passed in
+// through the data structure, and produces the correct
+// one.
 void *produceCandy (void *c) {
 	producer *Producer = (producer *)c;
 	semBuffer *producerCritSection = Producer->crit_section;
@@ -65,3 +71,5 @@ void *produceCandy (void *c) {
 
 	pthread_exit(NULL);
 }
+
+

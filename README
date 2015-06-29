@@ -1,0 +1,10 @@
+Producer-Consumer Lab
+CS 570 - Operating Systems
+Viet Truong
+
+The purpose of this lab is to develop an understanding of the Producer-Consumer problem and the various concepts that it covers, including:
+	- Posix Multi-threading
+	- Synchronization/Inter-process Communication
+	- Mutex/Semaphores
+	- Deadlocks
+In the lab, we are simulating a candy factory. The factory produces two candies, CRUNCHY FROG BITES and ESCARGOT SUCKERS. There are two machines constantly churning these out (the Producers). The two employees, Ethel and Lucy, serve as the consumers, packaging the candies up. The limit here is that the conveyor belt can only have a maximum of ten candies at once, and there can only be 3 FROG BITES produced at any time, since they are expensive. The program has various options that control the speed of production/consumption of the various players, and will generate a detailed output of each interaction.

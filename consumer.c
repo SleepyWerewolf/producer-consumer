@@ -1,5 +1,6 @@
 #include "mizzoCandy.h"
 
+// Consumer 
 void *consumeCandy (void *w) {
 	consumer *Consumer = (consumer *)w;
 	semBuffer *consumerCritSection = Consumer->crit_section;
@@ -66,3 +67,5 @@ void *consumeCandy (void *w) {
 
 	pthread_exit(NULL);
 }
+
+

@@ -1,5 +1,9 @@
 #include "mizzoCandy.h"
 
+// Main driver. Initializes the semaphore buffer and all
+// the threads, producers, and consumers. It blocks as it
+// waits for production to finish, then proceeds to
+// print a production report output
 int main (int argc, char *argv[]) {
 	int flagCheck;
 
@@ -88,3 +92,5 @@ int main (int argc, char *argv[]) {
 
 	exit(0);
 }
+
+
